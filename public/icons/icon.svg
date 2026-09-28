@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#2c6a45"/>
+  <!-- a pot, emptied down to its last line -->
+  <path d="M112 236h288v108a60 60 0 0 1-60 60H172a60 60 0 0 1-60-60z" fill="#fbfcf9"/>
+  <rect x="84" y="212" width="344" height="36" rx="18" fill="#fbfcf9"/>
+  <path d="M152 332h208" stroke="#e3a849" stroke-width="22" stroke-linecap="round"/>
+  <path d="M206 170c0-26 20-26 20-52M256 170c0-26 20-26 20-52M306 170c0-26 20-26 20-52" stroke="#d6e7d9" stroke-width="16" stroke-linecap="round" fill="none"/>
+</svg>
