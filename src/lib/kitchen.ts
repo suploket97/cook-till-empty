@@ -5,7 +5,7 @@
  */
 import { CATALOG } from "./catalog";
 import { addDays, todayISO } from "./dates";
-import { addAmount, batchesOf, consume, discardExpired, makeBatch, setTotal, usableQty, withBatches } from "./expiry";
+import { addAmount, batchesOf, consume, discardExpired, estimateDates, makeBatch, setTotal, usableQty, withBatches } from "./expiry";
 import { newId } from "./id";
 import { savedFor, type MatchContext } from "./matcher";
 import { convertInto, isNative, keyOf, packOf, round, statusOf, stepOf, unitOf, useOf } from "./units";
@@ -63,7 +63,7 @@ export function addToFridge(data: KitchenData, x: Parsed, opts: AddOptions = {})
       const bs = batchesOf(item, today);
       if (bs.length) {
         const target = [...bs].sort((a, b) => b.purchased.localeCompare(a.purchased))[0];
-        item = withBatches(item, bs.map((b) => (b === target ? { ...b, ...clean(dates), est: false } : b)));
+        item = withBatches(item, bs.map((b) => (b === target ? redate(item!.cid, b, clean(dates)) : b)));
       }
     }
     item.full = opts.restock ? item.qty : Math.max(item.full || 0, item.qty);
@@ -80,6 +80,31 @@ export function addToFridge(data: KitchenData, x: Parsed, opts: AddOptions = {})
   const listed = findListed(d, x);
   if (listed) d.list = d.list.filter((l) => l !== listed);
   return { data: d, item };
+}
+
+/**
+ * Apply dates the cook typed to a purchase. Estimated dates are guesses, so any the cook gives replace
+ * them all (an estimated best-before must not survive next to a real use-by); a new purchase date on an
+ * estimated purchase moves the estimate with it. Dates the cook entered earlier are kept.
+ */
+export function redate(cid: string | undefined, b: Batch, patch: Partial<Omit<Batch, "id">>): Batch {
+  const touchesExpiry = "useBy" in patch || "bestBefore" in patch;
+  const guessed = b.est || (!b.useBy && !b.bestBefore);
+  const base: Batch = { ...b };
+  if (b.est && touchesExpiry) {
+    delete base.useBy;
+    delete base.bestBefore;
+  }
+  const next: Batch = { ...base, ...patch };
+  for (const k of ["useBy", "bestBefore"] as const) if (!next[k]) delete next[k];
+  delete next.est;
+  if (touchesExpiry) return next;
+  if (patch.purchased && guessed) {
+    delete next.useBy;
+    delete next.bestBefore;
+    return { ...next, ...estimateDates(cid, next.purchased) };
+  }
+  return b.est ? { ...next, est: true } : next;
 }
 
 function clean(dates: BatchDates): BatchDates {
@@ -193,8 +218,7 @@ export function updateBatch(data: KitchenData, itemId: string, batchId: string, 
   const d = clone(data);
   const it = d.items.find((i) => i.id === itemId);
   if (!it) return { data, wentOut: undefined };
-  const datesTouched = "useBy" in patch || "bestBefore" in patch;
-  const bs = batchesOf(it, today).map((b) => (b.id === batchId ? { ...b, ...patch, ...(datesTouched ? { est: false } : {}) } : b));
+  const bs = batchesOf(it, today).map((b) => (b.id === batchId ? redate(it.cid, b, patch) : b));
   const updated = withBatches(it, bs);
   updated.full = Math.max(it.full || 0, updated.qty);
   put(d, updated);

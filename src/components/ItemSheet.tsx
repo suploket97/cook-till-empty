@@ -25,6 +25,8 @@ function BatchRow({ item, batch }: { item: FridgeItem; batch: Batch }) {
   const pastBest = !batch.useBy && !!batch.bestBefore && daysBetween(today, batch.bestBefore) < 0;
 
   const setDate = (key: "purchased" | "useBy" | "bestBefore", v: string) => {
+    // Chrome reports half-typed years ("0002-10-05") while typing: wait for a real date.
+    if (v && !/^(19|20)\d\d-\d\d-\d\d$/.test(v)) return;
     if (key === "purchased") {
       if (v) updateBatch(item.id, batch.id, { purchased: v });
       return;

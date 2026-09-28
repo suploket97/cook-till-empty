@@ -37,10 +37,13 @@ async function pull() {
   const sb = getSupabase();
   const hh = useKitchen.getState().household;
   if (!sb || !hh) return;
+  if (useKitchen.getState().needsReconcile) return;
   if (useKitchen.getState().outbox.length && !(await flushNow())) return;
   try {
+    const rev = useKitchen.getState().rev;
     const remote = await pullKitchen(sb, hh.id);
-    if (!useKitchen.getState().outbox.length) useKitchen.getState().applyRemote(remote);
+    // Edits made while the request was in flight win; they will be pushed and pulled again.
+    if (!useKitchen.getState().applyRemote(remote, rev)) scheduleFlush();
   } catch {
     useKitchen.getState().setSession({ sync: navigator.onLine ? "error" : "offline" });
   }
@@ -72,7 +75,16 @@ export function SyncController() {
 
     useKitchen.setState({ onCommit: () => scheduleFlush() });
 
-    async function start(email: string | null) {
+    let starting: Promise<void> | null = null;
+    let lastEmail: string | null = null;
+    /** One start at a time: sign-in events and the initial session check can arrive together. */
+    function start(email: string | null) {
+      lastEmail = email;
+      if (!starting) starting = doStart(email).finally(() => (starting = null));
+      return starting;
+    }
+
+    async function doStart(email: string | null) {
       const st = useKitchen.getState();
       st.setSession({ email, sync: "syncing" });
       try {
@@ -95,6 +107,15 @@ export function SyncController() {
             useKitchen.getState().applyRemote(remote);
           }
           useKitchen.getState().setSession({ syncedHousehold: hh.id, sync: "synced" });
+        } else if (useKitchen.getState().needsReconcile) {
+          // This device was edited while signed in but not connected. Send every difference
+          // between the server and this device, so those edits are not lost to the next pull.
+          const remote = await pullKitchen(sb!, hh.id);
+          const s = useKitchen.getState();
+          const ops = diffKitchen(remote, s.data, new Set(), hh.id, ids, s.prefs.region);
+          s.setSession({ outbox: mergeOutbox(s.outbox, ops), needsReconcile: false });
+          const ok = await flushNow();
+          useKitchen.getState().setSession({ sync: ok ? "synced" : navigator.onLine ? "error" : "offline" });
         } else {
           await pull();
           useKitchen.getState().setSession({ sync: "synced" });
@@ -111,22 +132,41 @@ export function SyncController() {
       unsubscribeRealtime?.();
       unsubscribeRealtime = null;
       // Keep the kitchen on this device; just stop syncing.
-      useKitchen.getState().setSession({ household: null, email: null, sync: "local", outbox: [], syncedHousehold: null });
+      useKitchen.getState().setSession({ household: null, email: null, sync: "local", outbox: [], syncedHousehold: null, needsReconcile: false });
     }
 
-    sb.auth.getUser().then(({ data }) => {
-      if (data.user) void start(data.user.email ?? null);
-    });
+    let signedIn = false;
+    // getSession reads the saved session without a network call, so an offline start still knows
+    // who is signed in (the server checks the token itself on every request).
+    sb.auth
+      .getSession()
+      .then(({ data }) => {
+        const user = data.session?.user;
+        if (user) {
+          signedIn = true;
+          void start(user.email ?? null);
+        }
+      })
+      .catch(() => {});
     const { data: authSub } = sb.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
+        signedIn = true;
         if (useKitchen.getState().household) return;
         void start(session.user.email ?? null);
       }
-      if (event === "SIGNED_OUT") stop();
+      if (event === "SIGNED_OUT") {
+        signedIn = false;
+        stop();
+      }
     });
 
-    const onOnline = () => void pull();
-    const onVisible = () => document.visibilityState === "visible" && void pull();
+    // Back online: finish a start that failed while offline, otherwise just catch up.
+    const resume = () => {
+      if (signedIn && !useKitchen.getState().household) void start(lastEmail);
+      else void pull();
+    };
+    const onOnline = resume;
+    const onVisible = () => document.visibilityState === "visible" && resume();
     window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisible);
 

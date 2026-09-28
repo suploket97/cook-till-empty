@@ -41,8 +41,12 @@ interface KitchenStore {
   prefs: Prefs;
   outbox: Op[];
   syncedHousehold: string | null;
+  /** Local edits were made while signed in but not connected; merge them in on the next sync. */
+  needsReconcile: boolean;
 
   /* session only */
+  /** Bumped on every local change, so a slow pull can tell it would overwrite newer edits. */
+  rev: number;
   undoSnap: KitchenData | null;
   fresh: string[];
   toast: Toast | null;
@@ -92,8 +96,9 @@ interface KitchenStore {
   /* ui + sync plumbing */
   showToast: (msg: string, actions?: ToastAction[]) => void;
   hideToast: () => void;
-  applyRemote: (data: KitchenData) => void;
-  setSession: (s: Partial<Pick<KitchenStore, "household" | "email" | "sync" | "syncedHousehold" | "outbox" | "aiEnabled">>) => void;
+  /** Replace local data with the server's. With `ifRev`, only if nothing changed locally since then. */
+  applyRemote: (data: KitchenData, ifRev?: number) => boolean;
+  setSession: (s: Partial<Pick<KitchenStore, "household" | "email" | "sync" | "syncedHousehold" | "outbox" | "aiEnabled" | "needsReconcile">>) => void;
   onCommit: (() => void) | null;
 }
 
@@ -135,10 +140,16 @@ export const useKitchen = create<KitchenStore>()(
         let outbox = get().outbox;
         const hh = get().household;
         const ids = getIdMap();
+        let needsReconcile = get().needsReconcile;
         if (hh && ids) outbox = mergeOutbox(outbox, diffKitchen(prev, next, new Set(opts.bought ?? []), hh.id, ids, get().prefs.region));
+        // Signed in on this device but not connected yet (offline start, or sync still starting):
+        // remember to send these edits once the connection is back.
+        else if (get().syncedHousehold) needsReconcile = true;
         const ai = get().ai;
         set({
           data: next,
+          rev: get().rev + 1,
+          needsReconcile,
           undoSnap: prev,
           fresh: changed.map((c) => c.id),
           outbox,
@@ -166,8 +177,10 @@ export const useKitchen = create<KitchenStore>()(
             const hit = body.items.find((r) => r.input.toLowerCase() === x.name!.toLowerCase());
             return hit ? { ...x, en: hit.en, th: hit.th, cat: hit.category, updatedAt: Date.now() } : x;
           };
+          // Labelling is not a user action: keep the Undo from the add that triggered it.
+          const keep = get().undoSnap;
           commit({ ...d, items: d.items.map(fix), list: d.list.map(fix) });
-          set({ undoSnap: null });
+          set({ undoSnap: keep });
         } catch {
           /* labelling is a nice-to-have */
         }
@@ -178,6 +191,8 @@ export const useKitchen = create<KitchenStore>()(
         prefs: DEFAULT_PREFS,
         outbox: [],
         syncedHousehold: null,
+        needsReconcile: false,
+        rev: 0,
         undoSnap: null,
         fresh: [],
         toast: null,
@@ -358,7 +373,11 @@ export const useKitchen = create<KitchenStore>()(
 
         showToast: (msg, actions = []) => set({ toast: { id: ++toastSeq, msg, actions } }),
         hideToast: () => set({ toast: null }),
-        applyRemote: (data) => set({ data: K.upgradeData(data), undoSnap: null }),
+        applyRemote: (data, ifRev) => {
+          if (ifRev !== undefined && (get().rev !== ifRev || get().outbox.length || get().needsReconcile)) return false;
+          set({ data: K.upgradeData(data), undoSnap: null });
+          return true;
+        },
         setSession: (s) => set(s),
       };
     },
@@ -367,7 +386,7 @@ export const useKitchen = create<KitchenStore>()(
       version: 2,
       storage: createJSONStorage(() => localStorage),
       skipHydration: true,
-      partialize: (s) => ({ data: s.data, prefs: s.prefs, outbox: s.outbox, syncedHousehold: s.syncedHousehold }),
+      partialize: (s) => ({ data: s.data, prefs: s.prefs, outbox: s.outbox, syncedHousehold: s.syncedHousehold, needsReconcile: s.needsReconcile }),
       // Saved state from older versions lacks newer settings and purchase dates: fill them in.
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<KitchenStore>;

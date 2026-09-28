@@ -4,6 +4,8 @@ import { Check, Clock, ShoppingCart } from "lucide-react";
 import { CATALOG } from "@/lib/catalog";
 import { takeFrom } from "@/lib/matcher";
 import { CUISINES } from "@/lib/recipes";
+import { todayISO } from "@/lib/dates";
+import { usableQty } from "@/lib/expiry";
 import { amountText, keyOf, nameOf, priceOf, unitOf } from "@/lib/units";
 import type { RecipeCardData, RecipeUse } from "@/lib/types";
 import { useKitchen } from "@/store/kitchen";
@@ -26,7 +28,7 @@ function UseChip({ u }: { u: RecipeUse }) {
   const items = useKitchen((s) => s.data.items);
   const item = u.itemId ? items.find((i) => i.id === u.itemId) : u.cid ? items.find((i) => i.cid === u.cid && i.qty > 0) : undefined;
   const label = u.cid ? nameOf({ cid: u.cid }, lang) : item ? nameOf(item, lang) : u.label;
-  const amount = item ? amountText(typeof u.amount === "number" ? Math.min(u.amount, item.qty) : takeFrom(item), unitOf(item), lang) : "";
+  const amount = item ? amountText(typeof u.amount === "number" ? Math.min(u.amount, usableQty(item, todayISO())) : takeFrom(item), unitOf(item), lang) : "";
   return (
     <span
       className={cx(

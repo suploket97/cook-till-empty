@@ -1,7 +1,7 @@
 /* Cook-Till-Empty service worker: lets the installed app open offline (e.g. in a supermarket with no signal).
    Pages: network first, fall back to the cached copy. Static assets and fonts: cache first.
    API calls and Supabase traffic are never cached. */
-const VERSION = "cte-v2";
+const VERSION = "cte-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon.svg", "/icons/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -31,8 +31,11 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(req, copy));
+          // Only keep real pages: never an error page or a redirect to sign-in.
+          if (res.ok && res.type === "basic" && !res.redirected) {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put(req, copy));
+          }
           return res;
         })
         .catch(() => caches.match(req).then((hit) => hit || caches.match("/"))),
@@ -85,7 +88,7 @@ self.addEventListener("notificationclick", (event) => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
       for (const w of wins) {
         if (w.url.startsWith(self.location.origin)) {
-          w.navigate(target).catch(() => {});
+          if (typeof w.navigate === "function") w.navigate(target).catch(() => {});
           return w.focus();
         }
       }

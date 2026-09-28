@@ -39,7 +39,7 @@ export function AccountSheet({ syncAvailable }: { syncAvailable: boolean }) {
     try {
       const hh = await joinHousehold(sb, code.trim());
       // Treat the joined kitchen as already known so the next start pulls it instead of uploading this device's data.
-      useKitchen.getState().setSession({ syncedHousehold: hh.id, outbox: [] });
+      useKitchen.getState().setSession({ syncedHousehold: hh.id, outbox: [], needsReconcile: false });
       setMsg(t.joined);
       setTimeout(() => location.reload(), 600);
     } catch {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseText } from "../parser";
 import { amountText, statusOf, stepOf } from "../units";
 import { pickRecipes } from "../matcher";
-import { addToFridge, addToList, cook, markBought, sampleKitchen, stepQty, throwAwayExpired, useUp } from "../kitchen";
+import { addToFridge, addToList, cook, markBought, redate, sampleKitchen, stepQty, throwAwayExpired, updateBatch, useUp } from "../kitchen";
 import { addDays, formatDate, parseDate } from "../dates";
 import { digest, expiring, expiryPhrase, itemExpiry } from "../expiry";
 import type { KitchenData } from "../types";
@@ -237,5 +237,33 @@ describe("daily push digest", () => {
       { inventoryId: "chicken", kind: "use_by", days: -1 },
       { inventoryId: "milk", kind: "use_by", days: 1 },
     ]);
+  });
+});
+
+describe("dates the cook types replace estimates", () => {
+  const T = "2026-09-28";
+  it("a real best-before replaces an estimated use-by", () => {
+    let d = addToFridge(empty(), { cid: "milk", qty: 1000 }, { today: T }).data;
+    expect(d.items[0].batches![0]).toMatchObject({ useBy: "2026-10-05", est: true });
+    d = addToFridge(d, { cid: "milk" }, { today: T, dates: { bestBefore: "2026-10-20" } }).data;
+    const b = d.items[0].batches![0];
+    expect(b.bestBefore).toBe("2026-10-20");
+    expect(b.useBy).toBeUndefined();
+    expect(b.est).toBeUndefined();
+  });
+  it("editing one date drops the other estimated date", () => {
+    let d = addToFridge(empty(), { cid: "cheese", qty: 200 }, { today: T }).data;
+    const it0 = d.items[0];
+    d = updateBatch(d, it0.id, it0.batches![0].id, { useBy: "2026-10-01" }, T).data;
+    const b = d.items[0].batches![0];
+    expect(b.useBy).toBe("2026-10-01");
+    expect(b.bestBefore).toBeUndefined();
+  });
+  it("a new purchase date moves an estimate but keeps typed dates", () => {
+    const est = { id: "b", qty: 1, purchased: T, useBy: "2026-10-05", est: true };
+    expect(redate("milk", est, { purchased: "2026-09-25" })).toMatchObject({ purchased: "2026-09-25", useBy: "2026-10-02", est: true });
+    const typed = { id: "b", qty: 1, purchased: T, useBy: "2026-10-09" };
+    expect(redate("milk", typed, { purchased: "2026-09-25" })).toEqual({ id: "b", qty: 1, purchased: "2026-09-25", useBy: "2026-10-09" });
+    expect(redate("milk", est, { qty: 0.5 })).toMatchObject({ useBy: "2026-10-05", est: true });
   });
 });
