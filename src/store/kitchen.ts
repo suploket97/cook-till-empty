@@ -118,7 +118,9 @@ let toastSeq = 0;
 
 export const useKitchen = create<KitchenStore>()(
   persist(
-    (set, get) => {
+    // Explicit return type: without it TypeScript infers the state from the object literal
+    // (e.g. `outbox: never[]`) instead of KitchenStore, and the build fails.
+    (set, get): KitchenStore => {
       const ctx = (): MatchContext => ({
         items: get().data.items,
         region: get().prefs.region,
